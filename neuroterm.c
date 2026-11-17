@@ -770,7 +770,7 @@ static void paste_bytes(const unsigned char *data, size_t len, int first, int la
         vterm_keyboard_end_paste(vt);
 }
 
-static int incr_active;
+static int incr_active, incr_count;
 
 static void request_paste(Atom selection, Time when)
 {
@@ -798,6 +798,7 @@ static void take_property(int from_incr)
         return;
     if (type == a_incr) {
         incr_active = 1; /* the text follows piece by piece */
+        incr_count++;
         vterm_keyboard_start_paste(vt);
     } else if (format == 8) {
         if (from_incr) {
@@ -905,9 +906,13 @@ static VTermKey special_key(KeySym k)
     return VTERM_KEY_NONE;
 }
 
+/* libX11's own keysym table (Cyrillic_*, Greek_*, the other national sets).
+ * It is exported but not declared in a public header, so it is taken only
+ * if this libX11 has it. It reads no file. */
+extern unsigned int KeySymToUcs4(KeySym keysym) __attribute__((weak));
+
 /* The character a keysym stands for, or 0. Latin-1 keysyms are their own
- * code points; Unicode keysyms carry theirs. Keysyms of the older national
- * sets (Cyrillic_*, Greek_*, ...) are not translated yet. */
+ * code points; Unicode keysyms carry theirs; the rest come from the table. */
 static uint32_t keysym_char(KeySym k)
 {
     if ((k >= 0x20 && k <= 0x7e) || (k >= 0xa0 && k <= 0xff))
@@ -928,6 +933,11 @@ static uint32_t keysym_char(KeySym k)
     }
     if (k >= XK_KP_0 && k <= XK_KP_9)
         return (uint32_t)('0' + (k - XK_KP_0));
+    if (k >= 0x100 && k < 0xfd00 && KeySymToUcs4) {
+        unsigned int u = KeySymToUcs4(k);
+        if (u >= 0x20 && u <= 0x10ffff)
+            return u;
+    }
     return 0;
 }
 
@@ -1222,9 +1232,9 @@ static void dump_view(void)
     if (!f)
         return;
     fprintf(f, "cols=%d rows=%d cell=%dx%d scroll=%d scrollback=%d cursor=%d,%d selection=%d "
-               "masks=%lu\n",
+               "masks=%lu piecewise-pastes=%d\n",
             cols, rows, cell_w, cell_h, scroll_off, sb_len, cursor.row, cursor.col, sel.active,
-            glyphs_drawn());
+            glyphs_drawn(), incr_count);
     for (int row = 0; row < rows; row++) {
         char text[4 * VTERM_MAX_CHARS_PER_CELL + 1];
         int last = -1;

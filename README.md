@@ -80,12 +80,13 @@ empty home directory, and checks:
 - `strace` shows no font, fontconfig, locale or weight file opened;
 - the program links no X font or text call (`XLoadFont`, `XDrawString`, `XCreateFontCursor`, ...), no
   input method, no Xft, fontconfig or FreeType;
-- typing, Ctrl+C, resize, scrollback, paste, copy, the alternate screen and exit work.
+- typing (Latin-1, Cyrillic and Greek keys too), Ctrl+C, resize, scrollback, paste (a small one and
+  one of 1.3 MB), copy, the alternate screen and exit work.
 
 ## Not there yet
 
-- Input methods, dead keys and Compose (they need locale files). Keys that give Latin-1 or Unicode
-  keysyms work; the older national keysym sets (`Cyrillic_*`, `Greek_*`) are not translated.
+- Input methods, dead keys and Compose (they need locale files). Keys that give a character directly
+  work in any layout, the Cyrillic and Greek ones included.
 - Lines are not rewrapped when the window gets narrower or wider.
 - Combining marks are drawn over their base character, not placed. No right-to-left layout.
 - A drawing two cells wide is the one-cell drawing centred; emoji from Neuronte's colour file are not used.

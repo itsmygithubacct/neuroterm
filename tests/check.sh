@@ -111,6 +111,27 @@ printf 'pasted one\npasted\ttwo [31m\n' >"$D/pasted.want"
 if wait_for "cmp -s '$D/pasted' '$D/pasted.want'"; then pass "paste"; else fail "paste: $(od -c "$D/pasted" 2>/dev/null | head -3)"; fi
 kill "$CLIP_PID" 2>/dev/null; CLIP_PID=
 
+# 6b. a paste too large for one property (sent piece by piece)
+i=0; : >"$D/big.want"
+while [ $i -lt 22000 ]; do printf 'line %05d of a large paste, sixty characters wide in all.....\n' $i; i=$((i + 1)); done >"$D/big.want"
+xclip -selection primary -loops 0 <"$D/big.want" &
+CLIP_PID=$!
+sleep 0.3
+type_line "stty -echo; cat > $D/big; stty echo"
+xdotool key shift+Insert
+sleep 3
+xdotool key ctrl+d
+dump
+if wait_for "cmp -s '$D/big' '$D/big.want'" && head -1 "$D/dump" | grep -q 'piecewise-pastes=1'; then pass "a 1.3 MB paste, sent piece by piece, arrives whole"; else fail "large paste: $(wc -c <"$D/big" 2>/dev/null) of $(wc -c <"$D/big.want") bytes; $(head -1 "$D/dump")"; fi
+kill "$CLIP_PID" 2>/dev/null; CLIP_PID=
+
+# 6c. keys of other alphabets: Latin-1, the Unicode range, the older Cyrillic and Greek sets
+type_line "cat > $D/keys"
+xdotool key eacute EuroSign Cyrillic_zhe Greek_lambda U2192
+xdotool key Return ctrl+d
+printf '\303\251\342\202\254\320\266\316\273\342\206\222\n' >"$D/keys.want"
+if wait_for "cmp -s '$D/keys' '$D/keys.want'"; then pass "keys: e-acute, euro, Cyrillic, Greek, an arrow"; else fail "keys: $(od -c "$D/keys" 2>/dev/null | head -2)"; fi
+
 # 7. copy: a double click selects a word and owns the primary selection
 type_line "clear; echo COPY-ME-456 and more"
 sleep 0.3
