@@ -7,6 +7,7 @@
 #   kilix fingerlock.py xterm -T TITLE -e sudo -- apt-get install ...
 #   kilix content_app   xterm -T LABEL -e PROGRAM ARGS...
 #   pleb test           xterm -title TITLE -geometry 40x10 -e sh -c 'exec sleep 600'
+#   a message window    xterm -T TITLE -geometry 78x12 -e sh -c 'echo ...; read answer'
 #   Debian's uxterm     xterm -class UXTerm -u8 ...
 #
 # Same switches as check.sh: NEUROTERM_BIN, NEUROTERM_CHECK_DISPLAY.
@@ -148,6 +149,15 @@ if wait_for "xdotool search --name '^pleb-probe-$$\$'"; then
 else fail "pleb test probe: no window with that title"; fi
 kill "$pid"
 if wait_for "! kill -0 $pid"; then pass "pleb test probe: ends when killed"; else fail "pleb test probe: still running"; fi
+
+# --- a message window that waits for Enter (the test guest's stand-in for a browser) ---
+"$X" -T "Browser" -geometry 78x12 -e sh -c 'echo "This does not work here."; read answer' &
+pid=$!; PIDS="$PIDS $pid"
+focus "$pid"; sleep 0.3; dump "$pid"
+if head -1 "$D/dump" | grep -q 'cols=78 rows=12' && grep -q '^This does not work here\.$' "$D/dump"; then pass "message window: 78x12 with its text"
+else fail "message window: $(head -2 "$D/dump" | tr '\n' '|')"; fi
+xdotool key Return
+if wait_for "! kill -0 $pid"; then pass "message window: closes on Enter"; else fail "message window: still open after Enter"; fi
 
 # --- Debian's uxterm script: xterm -class UXTerm -u8 ---
 "$X" -class UXTerm -u8 -e sleep 2 2>"$D/u8.err" &
