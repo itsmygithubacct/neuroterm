@@ -46,7 +46,7 @@ if [ -n "$LIVE" ]; then
     export DISPLAY XAUTHORITY
 else
     mkfifo "$D/display"
-    Xvfb -displayfd 3 -screen 0 1600x1000x24 -nolisten tcp 3>"$D/display" 2>"$D/xvfb.log" &
+    Xvfb -displayfd 3 -screen 0 1600x1000x24 -nolisten tcp -noreset 3>"$D/display" 2>"$D/xvfb.log" &
     XVFB_PID=$!
     read -r num <"$D/display"
     DISPLAY=:$num
@@ -158,12 +158,16 @@ sleep 0.3
 xdotool mousemove --window "$WID" $((2 + 3 * cw)) $((2 + chh / 2)) click --repeat 2 --delay 60 1
 sleep 0.3
 got=$(xclip -o -selection primary 2>/dev/null)
-if [ "$got" = "COPY-ME-456" ]; then pass "double click copies a word"; else fail "double click copied: '$got'"; fi
+if [ "$got" = "COPY-ME-456" ]; then pass "double click copies a word"
+else # selection=0 in the header: the clicks never reached the window; 1: it selected but another program holds the selection
+    dump; fail "double click copied: '$(printf '%s' "$got" | cut -c1-40)' ($(head -1 "$D/dump" | grep -o 'selection=[01]'); owner: $(xdotool getwindowname "$(xdotool getactivewindow 2>/dev/null)" 2>/dev/null))"
+fi
 sleep 0.6 # so the next click starts a new count
 xdotool mousemove --window "$WID" $((2 + 3 * cw)) $((2 + chh / 2)) click --repeat 3 --delay 60 1
 sleep 0.3
 got=$(xclip -o -selection primary 2>/dev/null)
-if [ "$got" = "COPY-ME-456 and more" ]; then pass "triple click copies the line"; else fail "triple click copied: '$got'"; fi
+if [ "$got" = "COPY-ME-456 and more" ]; then pass "triple click copies the line"
+else dump; fail "triple click copied: '$(printf '%s' "$got" | cut -c1-40)' ($(head -1 "$D/dump" | grep -o 'selection=[01]'))"; fi
 
 # 8. a full-screen program: alternate screen and back
 type_line "printf '\\033[?1049h\\033[2J\\033[HALT-SCREEN'; sleep 1; printf '\\033[?1049l'"

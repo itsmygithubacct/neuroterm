@@ -22,6 +22,7 @@ At run time it needs libc, libm and libX11.
 make NEURONTE_HOME=/path/to/neuronte-v2          # a Neuronte v2 source tree, tag v2.2.0 or later
 make NEURONTE_HOME=... EXTRA_WEIGHTS=/dir/of/more/bundles
 make check NEURONTE_HOME=...                     # needs Xvfb, xdotool, xclip; strace for one check
+sh tests/callers.sh                              # the command lines of xterm's callers
 ```
 
 The build needs a C compiler and the libX11 headers. It puts the newest `neuronte-split-vN.nrt` and every
@@ -34,11 +35,24 @@ build/neuroterm                                   # the shell
 build/neuroterm -geometry 100x30 -T "title" -e command args...
 ```
 
-It accepts the xterm options that callers of a rescue terminal use: `-e`, `-T`/`-title`, `-geometry`,
-`-fg`, `-bg`, `-rv`, `-fs`, `-sl`, `-hold`, `-ls`, `-tn`, `-class`, `-name`, `-display`. Other xterm
-options are accepted and ignored, so it can stand in for `xterm` on a command line. Like xterm it exits
-with status 0 when its command ends, whatever the command returned. Started under the name `xterm` or
-`uxterm` it sets the window class `XTerm` or `UXTerm`.
+It can stand in for `xterm` on a command line. Options, in three groups:
+
+- **Honoured:** `-e`, `-T`/`-title`, `-geometry`, `-fs`, `-fg`, `-bg`, `-rv`, `-sl`, `-hold`, `-ls`,
+  `-tn`, `-class`, `-name`, `-display`. `-fs` is a size in points; the cell is 0.8 by 1.6 of it in pixels.
+- **Accepted and reported on stderr as having no effect:** xterm options that only choose a look that
+  does not exist here: fonts (`-fa`, `-fn`, `-fb`, ...), border and scrollbar (`-bw`, `-sb`, ...),
+  cursor and pointer colours, and `-u8` (it is always UTF-8).
+- **Everything else stops the program** with a message and status 2 (`+u8`, `-k8`, `-into`, `-xrm`, an
+  unknown option, a stray word). An option that would change what the terminal does is never passed
+  over in silence. Started under the name `koi8rxterm` it refuses for the same reason.
+
+Like xterm it exits with status 0 when its command ends, whatever the command returned. If the command
+cannot be run it says so in the window and starts a shell. Started under the name `xterm` it sets the
+window class `XTerm`; under `uxterm` or `lxterm`, `UXTerm`.
+
+`packaging/install-as-xterm.sh` puts it in the place of `/usr/bin/xterm` and `/usr/bin/uxterm` on a
+Debian system with `dpkg-divert`, and takes it out again. `tests/callers.sh` runs it under the name
+`xterm` with the command lines Plebian-OS uses.
 
 `TERM` is `xterm-256color`.
 

@@ -36,7 +36,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define VERSION "0.1.0"
+#define VERSION "0.2.0"
 #define PAD 2          /* pixels between the window edge and the cells */
 #define MIN_CELL_W 4
 #define MAX_CELL_W 64
@@ -1423,19 +1423,35 @@ static void usage(FILE *out)
           "  -which U+XXXX...     say which weight file draws each character, and exit\n"
           "  -dump-on-usr1 file   on SIGUSR1 write the visible text to the file (for tests)\n"
           "  -version, -help\n"
-          "Other xterm options are accepted and ignored.\n"
+          "xterm's options that only choose a font, a border or a scrollbar are accepted and\n"
+          "reported as having no effect. Any other option stops the program with status 2.\n"
           "Keys: Shift+PageUp/PageDown scroll back; Shift+Insert or the middle button pastes;\n"
           "Ctrl+Shift+C/V copy and paste the clipboard; Ctrl+plus/minus change the text size.\n",
           out);
 }
 
-/* xterm options that take a value and mean nothing here */
-static int ignored_with_value(const char *o)
+/* xterm options that only choose how xterm looks, in ways that cannot
+ * apply here (one face, no scrollbar, no border). They are accepted, with a
+ * line on stderr saying so. Any option not handled in main() and not in
+ * these two lists stops the program: an option that changes what a
+ * terminal does is never passed over in silence. */
+static int looks_only_with_value(const char *o)
 {
-    static const char *const list[] = {"-fn", "-fa", "-fb", "-fw", "-fx", "-fd", "-fi", "-xrm",
-                                       "-bd", "-bw", "-b",  "-cr", "-ms", "-hc", "-kt", "-ti",
-                                       "-tm", "-lf", "-lc", "-mc", "-nb", "-en", "-n",  "-selbg",
-                                       "-selfg", "-into", "-w", NULL};
+    static const char *const list[] = {"-fn", "-fa", "-fb", "-fw", "-fx", "-fd", "-fi", "-bd",
+                                       "-bw", "-b",  "-cr", "-ms", "-hc", "-selbg", "-selfg",
+                                       "-n", NULL};
+    for (int i = 0; list[i]; i++)
+        if (strcmp(o, list[i]) == 0)
+            return 1;
+    return 0;
+}
+
+static int looks_only_flag(const char *o)
+{
+    static const char *const list[] = {"-u8", "-sb", "+sb", "-rightbar", "-leftbar", "-j",  "+j",
+                                       "-s",  "+s",  "-bc", "+bc",       "-vb",      "+vb", "-aw",
+                                       "-bdc", "+bdc", "-ulc", "+ulc",   "-pc",      "+pc", "-lc",
+                                       "-en", NULL};
     for (int i = 0; list[i]; i++)
         if (strcmp(o, list[i]) == 0)
             return 1;
@@ -1451,8 +1467,17 @@ int main(int argc, char **argv)
     int have_pos = 0, pos_x = 0, pos_y = 0;
     double points = 12.0;
 
+    dump_path = getenv("NEUROTERM_DUMP_ON_USR1"); /* the same as -dump-on-usr1, for tests */
+    if (dump_path && !dump_path[0])
+        dump_path = NULL;
+
     const char *prog = strrchr(argv[0], '/');
     prog = prog ? prog + 1 : argv[0];
+    if (strcmp(prog, "koi8rxterm") == 0) {
+        /* That name promises a KOI8-R terminal. This one is UTF-8 only. */
+        fprintf(stderr, "neuroterm: started as koi8rxterm, but KOI8-R is not supported\n");
+        return 2;
+    }
 
     for (int i = 1; i < argc; i++) {
         const char *o = argv[i];
@@ -1490,12 +1515,18 @@ int main(int argc, char **argv)
                 fprintf(stderr, "neuroterm: colour %s not understood (use #rrggbb)\n", v);
         } else if (strcmp(o, "-rv") == 0) {
             reverse = 1;
+        } else if (strcmp(o, "+rv") == 0) {
+            reverse = 0;
         } else if (strcmp(o, "-sl") == 0) {
             sb_cap = clampi(atoi(VALUE()), 0, 1000000);
         } else if (strcmp(o, "-hold") == 0) {
             hold = 1;
+        } else if (strcmp(o, "+hold") == 0) {
+            hold = 0;
         } else if (strcmp(o, "-ls") == 0) {
             login = 1;
+        } else if (strcmp(o, "+ls") == 0) {
+            login = 0;
         } else if (strcmp(o, "-tn") == 0) {
             term = VALUE();
         } else if (strcmp(o, "-class") == 0) {
@@ -1519,12 +1550,15 @@ int main(int argc, char **argv)
         } else if (strcmp(o, "-help") == 0 || strcmp(o, "--help") == 0 || strcmp(o, "-h") == 0) {
             usage(stdout);
             return 0;
-        } else if (ignored_with_value(o)) {
-            (void)VALUE();
-        } else if (o[0] != '-' && o[0] != '+') {
-            fprintf(stderr, "neuroterm: %s ignored\n", o);
+        } else if (looks_only_with_value(o)) {
+            const char *v = VALUE();
+            fprintf(stderr, "neuroterm: %s %s has no effect here\n", o, v);
+        } else if (looks_only_flag(o)) {
+            fprintf(stderr, "neuroterm: %s has no effect here\n", o);
+        } else {
+            fprintf(stderr, "neuroterm: %s is not supported; see neuroterm -help\n", o);
+            return 2;
         }
-        /* any other -option or +option: an xterm switch with no meaning here */
 #undef VALUE
     }
     if (reverse) {
@@ -1558,7 +1592,11 @@ int main(int argc, char **argv)
     cell_w = clampi((int)(0.6 * points * 96.0 / 72.0 + 0.5), MIN_CELL_W, MAX_CELL_W);
     cell_h = 2 * cell_w;
 
-    dpy = XOpenDisplay(display_name);
+    /* An X server that has just lost its last client resets itself and
+     * turns connections away for a moment. A rescue terminal is often
+     * started at exactly that moment, so try for two seconds. */
+    for (int attempt = 0; attempt < 10 && !(dpy = XOpenDisplay(display_name)); attempt++)
+        usleep(200000);
     if (!dpy)
         die("cannot open the X display %s", display_name ? display_name : getenv("DISPLAY")
                                                               ? getenv("DISPLAY")
@@ -1611,6 +1649,7 @@ int main(int argc, char **argv)
     XClassHint ch = {name_buf, (char *)(res_class                        ? res_class
                                         : strcmp(prog, "xterm") == 0   ? "XTerm"
                                         : strcmp(prog, "uxterm") == 0  ? "UXTerm"
+                                        : strcmp(prog, "lxterm") == 0  ? "UXTerm"
                                                                        : "Neuroterm")};
     XSetClassHint(dpy, win, &ch);
     XWMHints wm = {0};
