@@ -2,10 +2,18 @@
 # Drive build/neuroterm on a private Xvfb display and check that it works
 # as a terminal: typing, resize, scrollback, paste, copy, exit, and that it
 # opens no font file. Needs Xvfb, xdotool and xclip; strace for the file check.
+#
+#   NEUROTERM_BIN=/path/to/neuroterm   check an installed program instead
+#   NEUROTERM_CHECK_DISPLAY=:0         use that display, not a private Xvfb.
+#       The check then types and clicks in that session for about half a
+#       minute: do not run it on a display somebody is using.
 set -u
 cd "$(dirname "$0")/.."
-BIN=$PWD/build/neuroterm
-for tool in Xvfb xdotool xclip; do
+BIN=${NEUROTERM_BIN:-$PWD/build/neuroterm}
+LIVE=${NEUROTERM_CHECK_DISPLAY:-}
+tools="xdotool xclip"
+[ -n "$LIVE" ] || tools="Xvfb $tools"
+for tool in $tools; do
     command -v "$tool" >/dev/null 2>&1 || { echo "SKIP: $tool is not installed"; exit 77; }
 done
 
@@ -32,18 +40,25 @@ wait_for() {
     return 1
 }
 
-mkfifo "$D/display"
-Xvfb -displayfd 3 -screen 0 1600x1000x24 -nolisten tcp 3>"$D/display" 2>"$D/xvfb.log" &
-XVFB_PID=$!
-read -r num <"$D/display"
-DISPLAY=:$num
-export DISPLAY
+if [ -n "$LIVE" ]; then
+    DISPLAY=$LIVE
+    XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}
+    export DISPLAY XAUTHORITY
+else
+    mkfifo "$D/display"
+    Xvfb -displayfd 3 -screen 0 1600x1000x24 -nolisten tcp 3>"$D/display" 2>"$D/xvfb.log" &
+    XVFB_PID=$!
+    read -r num <"$D/display"
+    DISPLAY=:$num
+    export DISPLAY
+    unset XAUTHORITY
+fi
 
 # A fontconfig that knows no font, and a home with nothing in it.
 mkdir -p "$D/home" "$D/fc"
 printf '<?xml version="1.0"?>\n<fontconfig></fontconfig>\n' >"$D/fc/fonts.conf"
 export FONTCONFIG_FILE="$D/fc/fonts.conf" FONTCONFIG_PATH="$D/fc" HOME="$D/home"
-unset NEURONTE_HOME NEUROTERM_WEIGHTS XAUTHORITY
+unset NEURONTE_HOME NEUROTERM_WEIGHTS
 
 dump() {
     rm -f "$D/dump"
@@ -55,10 +70,15 @@ type_line() {
     xdotool key Return
 }
 
-ENV=/dev/null PS1='$ ' "$BIN" -geometry 80x24 -T check -dump-on-usr1 "$D/dump" -e /bin/sh &
+ENV=/dev/null PS1='$ ' "$BIN" -geometry 80x24 -T neuroterm-check -dump-on-usr1 "$D/dump" -e /bin/sh &
 TERM_PID=$!
-wait_for "xdotool search --name '^check\$'" || fail "the window appears"
-WID=$(xdotool search --name '^check$' | head -1)
+wait_for "xdotool search --name '^neuroterm-check\$'" || fail "the window appears"
+WID=$(xdotool search --name '^neuroterm-check$' | head -1)
+if [ -n "$LIVE" ]; then # a window manager decides who has the keyboard
+    xdotool windowactivate "$WID" 2>/dev/null
+    xdotool windowfocus "$WID" 2>/dev/null
+    sleep 0.5
+fi
 
 # 1. typing reaches the shell
 type_line "echo typed-\$((6*7)) > $D/typed"
@@ -176,7 +196,8 @@ if command -v strace >/dev/null 2>&1; then
 else echo "SKIP  strace is not installed"; fi
 
 # 12. nothing in the program can ask the X server for a font or for text
-if nm -D --undefined-only "$BIN" | grep -E ' (XLoad|XQueryFont|XListFonts|XDrawString|XDrawImageString|XDrawText|XCreateFontCursor|XCreateGlyphCursor|XSetFont|XCreateFontSet|XOpenIM|Xutf8|Xmb|Xwc|Xft|Fc[A-Z]|FT_)' >"$D/syms"; then
+if ! command -v nm >/dev/null 2>&1; then echo "SKIP  nm is not installed"
+elif nm -D --undefined-only "$BIN" | grep -E ' (XLoad|XQueryFont|XListFonts|XDrawString|XDrawImageString|XDrawText|XCreateFontCursor|XCreateGlyphCursor|XSetFont|XCreateFontSet|XOpenIM|Xutf8|Xmb|Xwc|Xft|Fc[A-Z]|FT_)' >"$D/syms"; then
     fail "font or text calls linked: $(cat "$D/syms")"
 else pass "no X font, text, input-method, Xft, fontconfig or FreeType call is linked"; fi
 
