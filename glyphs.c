@@ -23,7 +23,7 @@
 #define _DEFAULT_SOURCE
 #include "glyphs.h"
 
-#include "neuronte.h"
+#include "neuronte_sdk_mask.h"
 
 #include <dirent.h>
 #include <stdlib.h>
@@ -35,7 +35,7 @@ struct embedded {
 };
 extern const struct embedded neuroterm_embedded[];
 
-#define MAX_FILES 48
+#define MAX_FILES 128
 #define NAME_LEN 128
 
 struct source {
@@ -50,6 +50,7 @@ static int file_count;
 static struct source *opened[MAX_FILES];
 static int opened_count;
 static unsigned long drawn;
+static int metric_sans;
 
 static int has_suffix(const char *s, const char *suffix)
 {
@@ -75,6 +76,11 @@ static int is_term(const char *name)
     return strncmp(name, "neuronte-term-", 14) == 0 && has_suffix(name, ".nrt");
 }
 
+static int is_metric(const char *name)
+{
+    return strncmp(name, "neuronte-metric-sans", 20) == 0 && has_suffix(name, "-v1.nrt");
+}
+
 static int known(const char *name)
 {
     for (int i = 0; i < file_count; i++)
@@ -87,7 +93,7 @@ static void add(const char *name, const char *where, const struct embedded *buil
 {
     if (file_count >= MAX_FILES || strlen(name) >= NAME_LEN || known(name))
         return;
-    if (split_version(name) < 0 && !is_term(name))
+    if (split_version(name) < 0 && !is_term(name) && !(metric_sans && is_metric(name)))
         return;
     struct source *s = &files[file_count++];
     snprintf(s->name, sizeof s->name, "%s", name);
@@ -159,8 +165,9 @@ static int by_name(const void *a, const void *b)
     return strcmp(x->name, y->name);
 }
 
-int glyphs_init(int use_disk, char *err, size_t err_len)
+int glyphs_init(int use_disk, int use_metric_sans, char *err, size_t err_len)
 {
+    metric_sans = use_metric_sans;
     for (const struct embedded *e = neuroterm_embedded; e->name; e++)
         add(e->name, "built in", e);
     if (use_disk)
@@ -200,6 +207,17 @@ int glyphs_init(int use_disk, char *err, size_t err_len)
         else
             fprintf(stderr, "neuroterm: weight file %s (%s) does not open; skipped\n",
                     terms[i]->name, terms[i]->where);
+    if (metric_sans) {
+        int before = opened_count;
+        for (int i = 0; i < file_count; i++)
+            if (is_metric(files[i].name) && open_source(&files[i]) == 0)
+                opened[opened_count++] = &files[i];
+        if (opened_count == before) {
+            snprintf(err, err_len, "Metric Sans weights are unavailable; set NEUROTERM_WEIGHTS "
+                                   "to a directory containing the Metric Sans bundles");
+            return -1;
+        }
+    }
     return 0;
 }
 
@@ -212,7 +230,7 @@ void glyphs_list(FILE *out)
 static const neuronte *source_for(uint32_t scalar, int *trained)
 {
     for (int i = 0; i < opened_count; i++)
-        if (neuronte_untrained(opened[i]->handle, scalar) == 0) {
+        if (!is_metric(opened[i]->name) && neuronte_untrained(opened[i]->handle, scalar) == 0) {
             *trained = 1;
             return opened[i]->handle;
         }
@@ -228,12 +246,45 @@ int glyphs_trained(uint32_t scalar)
     return trained;
 }
 
-const char *glyphs_file(uint32_t scalar)
+/* Select the native face for this em. Keep the terminal's fixed cell grid. */
+static const struct source *metric_source(uint32_t scalar, int cell_w, unsigned *style)
 {
-    int trained = 0;
+    static const char *const suffix[] = {"", "-bold", "-italic", "-bold-italic"};
+    char face[NAME_LEN];
+    unsigned variant = *style;
+    if (!metric_sans)
+        return NULL;
+    for (;;) {
+        if (cell_w <= 16)
+            snprintf(face, sizeof face, "neuronte-metric-sans%d%s-v1.nrt", cell_w, suffix[variant]);
+        else
+            snprintf(face, sizeof face, "neuronte-metric-sans-%s-v1.nrt",
+                     cell_w <= 32 ? "scaled" : "large");
+        for (int i = 0; i < opened_count; i++)
+            if (strcmp(opened[i]->name, face) == 0 &&
+                neuronte_untrained(opened[i]->handle, scalar) == 0) {
+                if (cell_w <= 16)
+                    *style &= ~variant;
+                return opened[i];
+            }
+        if (variant == 0 || cell_w > 16)
+            return NULL;
+        variant = 0;
+    }
+}
+
+const char *glyphs_file(uint32_t scalar, int cell_w)
+{
     if (!opened_count)
         return NULL;
-    const neuronte *n = source_for(scalar > 0x10ffffu ? NEURONTE_REPLACEMENT : scalar, &trained);
+    if (scalar > 0x10ffffu)
+        scalar = NEURONTE_REPLACEMENT;
+    unsigned style = 0;
+    const struct source *metric = metric_source(scalar, cell_w, &style);
+    if (metric)
+        return metric->name;
+    int trained = 0;
+    const neuronte *n = source_for(scalar, &trained);
     if (!trained)
         return NULL;
     for (int i = 0; i < opened_count; i++)
@@ -270,11 +321,6 @@ static void cache_empty(void)
     cache_used = 0;
 }
 
-static uint8_t to_byte(float v)
-{
-    return v <= 0.f ? 0 : v >= 1.f ? 255 : (uint8_t)(v * 255.f + 0.5f);
-}
-
 const uint8_t *glyphs_mask(uint32_t scalar, unsigned style, int wide, int cell_w, int cell_h)
 {
     if (!opened_count || cell_w < 1 || cell_h < 1 || cell_w > 512 || cell_h > 1024)
@@ -303,32 +349,19 @@ const uint8_t *glyphs_mask(uint32_t scalar, unsigned style, int wide, int cell_w
         scratch = grown;
         scratch_len = area;
     }
-    uint8_t *mask = calloc(area, 1);
+    uint8_t *mask = malloc(area);
     if (!mask)
         return NULL;
 
     int trained = 0;
-    const neuronte *n = source_for(scalar, &trained);
+    const struct source *metric = metric_source(scalar, cell_w, &style);
+    const neuronte *n = metric ? metric->handle : source_for(scalar, &trained);
+    if (metric)
+        trained = 1;
     unsigned nstyle = (style & GLYPH_BOLD ? NEURONTE_STYLE_BOLD : 0u) |
                       (style & GLYPH_ITALIC ? NEURONTE_STYLE_ITALIC : 0u);
-    int rc;
-    if (wide && trained) {
-        /* A drawing is one cell wide: centre it in the two cells. */
-        rc = neuronte_coverage_styled(n, scalar, cell_w, cell_h, 0, nstyle, scratch);
-        if (rc == NEURONTE_OK) {
-            int left = cell_w / 2;
-            for (int y = 0; y < cell_h; y++)
-                for (int x = 0; x < cell_w; x++)
-                    mask[(size_t)y * out_w + left + x] = to_byte(scratch[(size_t)y * cell_w + x]);
-        }
-    } else {
-        /* One cell, or one mark across both cells of a wide character. */
-        rc = neuronte_coverage_styled(n, scalar, out_w, cell_h, 0, trained ? nstyle : 0u, scratch);
-        if (rc == NEURONTE_OK)
-            for (size_t i = 0; i < area; i++)
-                mask[i] = to_byte(scratch[i]);
-    }
-    if (rc != NEURONTE_OK) {
+    if (nsdk_cell_mask(n, scalar, nstyle, trained, span, cell_w, cell_h,
+                       scratch, mask) != NEURONTE_OK) {
         free(mask);
         return NULL;
     }

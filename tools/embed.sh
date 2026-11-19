@@ -2,7 +2,7 @@
 # Write an assembler file that holds the weight files and a C table naming
 # them. Usage: embed.sh out.S out.c weights-dir...
 # Taken from the directories: the newest neuronte-split-vN.nrt and every
-# neuronte-term-*.nrt. A name found twice is taken from the first directory.
+# neuronte-term-*.nrt and Metric Sans face. A duplicate uses the first directory.
 set -eu
 asm=$1; table=$2; shift 2
 
@@ -21,7 +21,7 @@ done
 [ -n "$best" ] && printf '%s\n' "$best" >"$list"
 
 for dir in "$@"; do
-    for f in "$dir"/neuronte-term-*.nrt; do
+    for f in "$dir"/neuronte-term-*.nrt "$dir"/neuronte-metric-sans*-v1.nrt; do
         [ -f "$f" ] || continue
         name=${f##*/}
         grep -q "/$name\$" "$list" || printf '%s\n' "$f" >>"$list"

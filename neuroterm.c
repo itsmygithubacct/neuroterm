@@ -1418,6 +1418,7 @@ static void usage(FILE *out)
           "  -tn name             TERM for the child (default xterm-256color)\n"
           "  -class, -name text   window class and instance\n"
           "  -display name        X display\n"
+          "  --font metric-sans   use Neuronte Sans Metric in the terminal grid\n"
           "  -no-disk-weights     use only the weight files built into the program\n"
           "  -list-weights        print the weight files in use and exit\n"
           "  -which U+XXXX...     say which weight file draws each character, and exit\n"
@@ -1464,6 +1465,7 @@ int main(int argc, char **argv)
     const char *res_class = NULL, *res_name = NULL;
     char **command = NULL;
     int use_disk = 1, list_weights = 0, login = 0, reverse = 0, which_from = 0;
+    int metric_sans = 0;
     int have_pos = 0, pos_x = 0, pos_y = 0;
     double points = 12.0;
 
@@ -1503,6 +1505,11 @@ int main(int argc, char **argv)
                 pos_x = gx;
                 pos_y = gy;
             }
+        } else if (strcmp(o, "--font") == 0) {
+            const char *font = VALUE();
+            if (strcmp(font, "metric-sans") != 0)
+                die("unknown font %s; expected metric-sans", font);
+            metric_sans = 1;
         } else if (strcmp(o, "-fs") == 0) {
             points = atof(VALUE());
         } else if (strcmp(o, "-fg") == 0) {
@@ -1567,8 +1574,14 @@ int main(int argc, char **argv)
         default_bg = t;
     }
 
+    /* The cell: 0.6 em wide at 96 dots per inch, twice as high. */
+    if (points < 3 || points > 96)
+        points = 12;
+    cell_w = clampi((int)(0.6 * points * 96.0 / 72.0 + 0.5), MIN_CELL_W, MAX_CELL_W);
+    cell_h = 2 * cell_w;
+
     char err[256];
-    if (glyphs_init(use_disk, err, sizeof err) != 0)
+    if (glyphs_init(use_disk, metric_sans, err, sizeof err) != 0)
         die("%s", err);
     if (list_weights) {
         glyphs_list(stdout);
@@ -1580,17 +1593,11 @@ int main(int argc, char **argv)
             if ((v[0] == 'U' || v[0] == 'u') && v[1] == '+')
                 v += 2;
             uint32_t scalar = (uint32_t)strtoul(v, NULL, 16);
-            const char *file = glyphs_file(scalar);
+            const char *file = glyphs_file(scalar, cell_w);
             printf("U+%04X\t%s\n", (unsigned)scalar, file ? file : "no drawing: the mark");
         }
         return 0;
     }
-
-    /* The cell: 0.6 em wide at 96 dots per inch, twice as high. */
-    if (points < 3 || points > 96)
-        points = 12;
-    cell_w = clampi((int)(0.6 * points * 96.0 / 72.0 + 0.5), MIN_CELL_W, MAX_CELL_W);
-    cell_h = 2 * cell_w;
 
     /* An X server that has just lost its last client resets itself and
      * turns connections away for a moment. A rescue terminal is often

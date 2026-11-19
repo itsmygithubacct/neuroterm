@@ -14,7 +14,7 @@ enum { GLYPH_BOLD = 1u, GLYPH_ITALIC = 2u };
  * use_disk is not zero, files of other names found in a weights directory.
  * Returns 0, or -1 with a message in err when no file with the base
  * characters opens. */
-int glyphs_init(int use_disk, char *err, size_t err_len);
+int glyphs_init(int use_disk, int use_metric_sans, char *err, size_t err_len);
 
 /* One line per opened file: its name and where it came from. */
 void glyphs_list(FILE *out);
@@ -23,7 +23,7 @@ void glyphs_list(FILE *out);
 int glyphs_trained(uint32_t scalar);
 
 /* The name of the file that draws the scalar, or NULL when it gets the mark. */
-const char *glyphs_file(uint32_t scalar);
+const char *glyphs_file(uint32_t scalar, int cell_w);
 
 /* The coverage of one character, 0..255 per pixel, row-major, span * cell_w
  * wide and cell_h high, where span is 2 for a character two cells wide and 1

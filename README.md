@@ -25,7 +25,10 @@ make check NEURONTE_HOME=...                     # needs Xvfb, xdotool, xclip; s
 sh tests/callers.sh                              # the command lines of xterm's callers
 ```
 
-The build needs a C compiler and the libX11 headers. It puts the newest `neuronte-split-vN.nrt` and every
+The build needs a C compiler, the libX11 headers, and the Neuronte SDK source
+with its [cell-mask API](https://github.com/itsmygithubacct/neuronte-sdk/tree/61df4489756cde5b486f1c7d66135f2bc4ea5131).
+In the Kilix source tree the SDK is picked up from
+`../../kilix-modules/neuronte-sdk`. Set `NEURONTE_SDK_HOME` for another checkout. It puts the newest `neuronte-split-vN.nrt` and every
 `neuronte-term-*.nrt` it is given inside the program; `build/neuroterm -list-weights` names them.
 
 ## Run
@@ -66,6 +69,23 @@ Debian system with `dpkg-divert`, and takes it out again. `tests/callers.sh` run
 | Shift with the mouse | select even when the program in the terminal has taken the mouse |
 
 In a full-screen program (a pager, an editor) the wheel sends arrow keys.
+
+## Neuronte Sans Metric
+
+Build with a Neuronte source tree that supports the Metric Sans bundles.
+The build embeds the Metric Sans faces from that tree’s weights directory.
+Select the font before any `-e` command. You can also point
+`NEUROTERM_WEIGHTS` at a directory containing the bundles.
+
+```sh
+make -B NEURONTE_HOME=/path/to/metric-sans
+build/neuroterm --font metric-sans
+```
+
+The terminal keeps its fixed-width grid. It picks the Metric Sans face for
+the cell size and style where available, falling back to its regular face with
+synthetic styling or to the standard terminal bundles for other characters.
+Use `--font metric-sans -which U+0041` to see which file draws a character.
 
 ## How a cell is drawn
 
