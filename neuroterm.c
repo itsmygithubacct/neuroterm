@@ -13,7 +13,7 @@
 
 #include "glyphs.h"
 
-#include "vterm.h"
+#include "neuroterm_terminal.h"
 
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
@@ -375,14 +375,6 @@ static char *sel_text(void)
 
 /* ---- drawing ---- */
 
-static uint32_t colour(VTermColor *c, int is_fg)
-{
-    if (is_fg ? VTERM_COLOR_IS_DEFAULT_FG(c) : VTERM_COLOR_IS_DEFAULT_BG(c))
-        return is_fg ? default_fg : default_bg;
-    vterm_screen_convert_color_to_rgb(vts, c);
-    return (uint32_t)c->rgb.red << 16 | (uint32_t)c->rgb.green << 8 | c->rgb.blue;
-}
-
 static inline uint32_t mix(uint32_t bg, uint32_t fg, unsigned a)
 {
     unsigned na = 255 - a;
@@ -414,7 +406,7 @@ static void fill(int x, int y, int w, int h, uint32_t rgb)
     }
 }
 
-static void blend(const uint8_t *mask, int x, int y, int w, int h, uint32_t bg, uint32_t fg)
+static void blend(const uint8_t *mask, int x, int y, int w, int h, uint32_t fg)
 {
     for (int j = 0; j < h; j++) {
         if (y + j < 0 || y + j >= win_h)
@@ -424,91 +416,48 @@ static void blend(const uint8_t *mask, int x, int y, int w, int h, uint32_t bg, 
         for (int i = 0; i < w; i++) {
             if (!m[i] || x + i < 0 || x + i >= win_w)
                 continue;
-            p[x + i] = m[i] == 255 ? (fg | 0xff000000u) : mix(bg, fg, m[i]);
+            p[x + i] = m[i] == 255 ? (fg | 0xff000000u) : mix(p[x + i], fg, m[i]);
         }
     }
 }
 
-/* Is this scalar drawn at all? Joiners and variation selectors are not. */
-static int invisible(uint32_t c)
+static void paint_fill(void *user, int x, int y, int w, int h, uint32_t rgb)
 {
-    return c == 0x200d || c == 0x200c || (c >= 0xfe00 && c <= 0xfe0f) ||
-           (c >= 0xe0100 && c <= 0xe01ef) || c == 0x2060 || c == 0xfeff;
+    (void)user;
+    fill(x, y, w, h, rgb);
+}
+
+static void paint_glyph(void *user, uint32_t ch, unsigned flags, int x, int y,
+                        int w, int h, uint32_t fg)
+{
+    (void)user;
+    unsigned style = (flags & NEUROTERM_BOLD ? GLYPH_BOLD : 0u) |
+                     (flags & NEUROTERM_ITALIC ? GLYPH_ITALIC : 0u);
+    const uint8_t *mask = glyphs_mask(ch, style, w == 2 * cell_w, cell_w, h);
+    if (mask) blend(mask, x, y, w, h, fg);
 }
 
 static void draw_row(int row)
 {
+    static const neuroterm_painter painter = {
+        .fill = paint_fill, .glyph = paint_glyph,
+    };
     int line = top_line() + row;
     int y = PAD + row * cell_h;
-    int line_px = cell_h >= 28 ? 2 : 1;
-    int baseline = (3 * cell_h) / 4;
     int cursor_here = scroll_off == 0 && cursor_visible && row == cursor.row;
+    neuroterm_cell_style style = {
+        .foreground = default_fg, .background = default_bg,
+        .focused = focused, .cursor_shape = cursor_shape, .paint_default_background = true,
+    };
 
     for (int col = 0; col < cols;) {
-        VTermScreenCell c;
-        cell_at(line, col, &c);
-        int span = c.width == 2 && col + 1 < cols ? 2 : 1;
-        int x = PAD + col * cell_w, w = span * cell_w;
-        uint32_t fg = colour(&c.fg, 1), bg = colour(&c.bg, 0);
-        if (c.attrs.reverse) {
-            uint32_t t = fg;
-            fg = bg;
-            bg = t;
-        }
-        if (selected(line, col)) {
-            uint32_t t = fg;
-            fg = bg;
-            bg = t;
-            if (fg == bg)
-                fg = ~bg & 0xffffff;
-        }
-        int is_cursor = cursor_here && cursor.col >= col && cursor.col < col + span;
-        if (is_cursor && focused && cursor_shape == VTERM_PROP_CURSORSHAPE_BLOCK) {
-            fg = default_bg;
-            bg = default_fg;
-        }
-        if (c.attrs.conceal)
-            fg = bg;
-        fill(x, y, w, cell_h, bg);
-
-        uint32_t ch = c.chars[0];
-        if (ch != 0 && ch != ' ' && ch != 0xa0 && ch != (uint32_t)-1) {
-            unsigned style = (c.attrs.bold ? GLYPH_BOLD : 0u) | (c.attrs.italic ? GLYPH_ITALIC : 0u);
-            const uint8_t *mask = glyphs_mask(ch, style, span == 2, cell_w, cell_h);
-            if (mask)
-                blend(mask, x, y, w, cell_h, bg, fg);
-            for (int i = 1; i < VTERM_MAX_CHARS_PER_CELL && c.chars[i]; i++) {
-                if (invisible(c.chars[i]))
-                    continue;
-                mask = glyphs_mask(c.chars[i], style, span == 2, cell_w, cell_h);
-                if (mask)
-                    blend(mask, x, y, w, cell_h, bg, fg);
-            }
-        }
-        if (c.attrs.underline) {
-            int uy = baseline + line_px + 1;
-            if (uy + line_px > cell_h)
-                uy = cell_h - line_px;
-            fill(x, y + uy, w, line_px, fg);
-            if (c.attrs.underline == VTERM_UNDERLINE_DOUBLE && uy - 2 * line_px > 0)
-                fill(x, y + uy - 2 * line_px, w, line_px, fg);
-        }
-        if (c.attrs.strike)
-            fill(x, y + (11 * cell_h) / 20, w, line_px, fg);
-
-        if (is_cursor) {
-            uint32_t cc = default_fg;
-            if (!focused) { /* a hollow box */
-                fill(x, y, w, 1, cc);
-                fill(x, y + cell_h - 1, w, 1, cc);
-                fill(x, y, 1, cell_h, cc);
-                fill(x + w - 1, y, 1, cell_h, cc);
-            } else if (cursor_shape == VTERM_PROP_CURSORSHAPE_UNDERLINE) {
-                fill(x, y + cell_h - 2, w, 2, cc);
-            } else if (cursor_shape == VTERM_PROP_CURSORSHAPE_BAR_LEFT) {
-                fill(x, y, 2, cell_h, cc);
-            }
-        }
+        VTermScreenCell cell;
+        cell_at(line, col, &cell);
+        int span = cell.width == 2 && col + 1 < cols ? 2 : 1;
+        style.selected = selected(line, col);
+        style.cursor = cursor_here && cursor.col >= col && cursor.col < col + span;
+        neuroterm_paint_cell(vts, &cell, PAD + col * cell_w, y, cell_w, cell_h,
+                             span, &style, &painter);
         col += span;
     }
 }
@@ -1665,28 +1614,12 @@ int main(int argc, char **argv)
     if (sb_cap > 0)
         sb = xmalloc((size_t)sb_cap * sizeof sb[0]);
 
-    vt = vterm_new(rows, cols);
+    vt = neuroterm_create(cols, rows, default_fg, default_bg, &screen_callbacks, NULL);
     if (!vt)
         die("out of memory");
-    vterm_set_utf8(vt, 1);
     vterm_output_set_callback(vt, vt_output, NULL);
     vtstate = vterm_obtain_state(vt);
     vts = vterm_obtain_screen(vt);
-    vterm_screen_set_callbacks(vts, &screen_callbacks, NULL);
-    vterm_screen_enable_altscreen(vts, 1);
-    vterm_screen_set_damage_merge(vts, VTERM_DAMAGE_SCROLL);
-    VTermColor vfg, vbg;
-    vterm_color_rgb(&vfg, (uint8_t)(default_fg >> 16), (uint8_t)(default_fg >> 8),
-                    (uint8_t)default_fg);
-    vterm_color_rgb(&vbg, (uint8_t)(default_bg >> 16), (uint8_t)(default_bg >> 8),
-                    (uint8_t)default_bg);
-    vterm_screen_set_default_colors(vts, &vfg, &vbg);
-    vterm_screen_reset(vts, 1);
-    /* The usual dark blue cannot be read on a dark background, and it is
-     * the colour ls gives directories. */
-    VTermColor blue;
-    vterm_color_rgb(&blue, 0x5c, 0x8c, 0xff);
-    vterm_state_set_palette_color(vtstate, 4, &blue);
     vterm_state_get_default_colors(vtstate, &blank_cell.fg, &blank_cell.bg);
     blank_cell.width = 1;
 

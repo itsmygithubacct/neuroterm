@@ -7,6 +7,8 @@
 # directories are put inside the program. EXTRA_WEIGHTS names more
 # directories of bundles to put in.
 
+.DEFAULT_GOAL := all
+
 CC ?= cc
 CFLAGS ?= -O2
 WARN = -Wall -Wextra
@@ -14,16 +16,15 @@ X11_CFLAGS ?= $(shell pkg-config --cflags x11 2>/dev/null)
 X11_LIBS ?= $(shell pkg-config --libs x11 2>/dev/null || echo -lX11)
 
 ifeq ($(strip $(NEURONTE_HOME)),)
-ifeq ($(filter clean,$(MAKECMDGOALS)),)
+ifeq ($(filter clean check-embed,$(MAKECMDGOALS)),)
 $(error set NEURONTE_HOME to a Neuronte v2 source tree: make NEURONTE_HOME=/path/to/neuronte-v2)
 endif
 endif
 
 WEIGHTS = $(NEURONTE_HOME)/weights $(EXTRA_WEIGHTS)
-VT = third_party/libvterm
-VT_SRC = encoding keyboard mouse parser pen screen state unicode vterm
+include embed.mk
 OBJS = build/neuroterm.o build/glyphs.o build/embed.o build/weights.o \
-       build/nrt-neuronte.o build/nrt-utf8.o $(VT_SRC:%=build/vt-%.o)
+       build/nrt-neuronte.o build/nrt-utf8.o $(NEUROTERM_OBJECTS)
 
 all: build/neuroterm
 
@@ -33,8 +34,8 @@ build:
 build/neuroterm: $(OBJS)
 	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(X11_LIBS) -lm
 
-build/neuroterm.o: neuroterm.c glyphs.h | build
-	$(CC) -std=c11 $(WARN) $(CPPFLAGS) $(CFLAGS) $(X11_CFLAGS) -I$(VT)/include -c -o $@ $<
+build/neuroterm.o: neuroterm.c glyphs.h include/neuroterm_terminal.h | build
+	$(CC) -std=c11 $(WARN) $(CPPFLAGS) $(CFLAGS) $(X11_CFLAGS) $(NEUROTERM_CPPFLAGS) -c -o $@ $<
 
 build/glyphs.o: glyphs.c glyphs.h | build
 	$(CC) -std=c11 $(WARN) $(CPPFLAGS) $(CFLAGS) -I$(NEURONTE_HOME)/include -c -o $@ $<
@@ -42,9 +43,6 @@ build/glyphs.o: glyphs.c glyphs.h | build
 # Neuronte itself, built as its own Makefile builds it.
 build/nrt-%.o: $(NEURONTE_HOME)/src/%.c | build
 	$(CC) -std=c11 -O3 -I$(NEURONTE_HOME)/include -c -o $@ $<
-
-build/vt-%.o: $(VT)/src/%.c | build
-	$(CC) -std=c99 $(CPPFLAGS) $(CFLAGS) -I$(VT)/include -c -o $@ $<
 
 # The weight files, inside the program.
 build/weights.S build/embed.c: tools/embed.sh $(wildcard $(WEIGHTS:%=%/neuronte-*.nrt)) | build
@@ -56,10 +54,16 @@ build/weights.o: build/weights.S
 build/embed.o: build/embed.c
 	$(CC) -std=c11 -c -o $@ $<
 
-check: build/neuroterm
+build/check-embed: tests/check-embed.c $(NEUROTERM_OBJECTS) | build
+	$(CC) -std=c11 $(WARN) $(CPPFLAGS) $(NEUROTERM_CPPFLAGS) $(CFLAGS) -o $@ $^
+
+check-embed: build/check-embed
+	./build/check-embed
+
+check: build/neuroterm check-embed
 	sh tests/check.sh
 
 clean:
 	rm -rf build
 
-.PHONY: all check clean
+.PHONY: all check check-embed clean

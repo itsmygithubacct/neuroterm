@@ -273,6 +273,23 @@ void vterm_state_set_bold_highbright(VTermState *state, int bold_is_highbright)
   state->bold_is_highbright = bold_is_highbright;
 }
 
+/* The colon RGB form may include a colour-space slot. */
+static int lookup_sgr_colour(const VTermState *state, const long args[], int argcount, VTermColor *col)
+{
+  if(argcount < 2)
+    return 0;
+
+  int palette = CSI_ARG(args[1]);
+  int first = 2;
+  if(palette == 2 && argcount >= 6 &&
+     CSI_ARG_HAS_MORE(args[0]) && CSI_ARG_HAS_MORE(args[1]) &&
+     CSI_ARG_HAS_MORE(args[2]) && CSI_ARG_HAS_MORE(args[3]) &&
+     CSI_ARG_HAS_MORE(args[4]) && !CSI_ARG_HAS_MORE(args[5]))
+    first = 3;
+
+  return first - 1 + lookup_colour(state, palette, args + first, argcount - first, col);
+}
+
 INTERNAL void vterm_state_setpen(VTermState *state, const long args[], int argcount)
 {
   // SGR - ECMA-48 8.3.117
@@ -403,9 +420,7 @@ INTERNAL void vterm_state_setpen(VTermState *state, const long args[], int argco
       break;
 
     case 38: // Foreground colour alternative palette
-      if(argcount - argi < 1)
-        return;
-      argi += 1 + lookup_colour(state, CSI_ARG(args[argi+1]), args+argi+2, argcount-argi-2, &state->pen.fg);
+      argi += lookup_sgr_colour(state, args + argi, argcount - argi, &state->pen.fg);
       setpenattr_col(state, VTERM_ATTR_FOREGROUND, state->pen.fg);
       break;
 
@@ -421,9 +436,7 @@ INTERNAL void vterm_state_setpen(VTermState *state, const long args[], int argco
       break;
 
     case 48: // Background colour alternative palette
-      if(argcount - argi < 1)
-        return;
-      argi += 1 + lookup_colour(state, CSI_ARG(args[argi+1]), args+argi+2, argcount-argi-2, &state->pen.bg);
+      argi += lookup_sgr_colour(state, args + argi, argcount - argi, &state->pen.bg);
       setpenattr_col(state, VTERM_ATTR_BACKGROUND, state->pen.bg);
       break;
 

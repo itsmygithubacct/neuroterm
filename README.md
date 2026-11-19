@@ -86,6 +86,23 @@ A weights directory may add files the program does not hold (a newer split file,
 replaces a built-in file of the same name, and one that does not open is skipped. `-no-disk-weights`
 turns this off.
 
+## Embedding a terminal
+
+Include `embed.mk` in the host Makefile, set `NEUROTERM_BUILD_DIR` to the
+host's build directory for terminal objects, and link `NEUROTERM_OBJECTS`.
+Use `NEUROTERM_CPPFLAGS` when compiling against `neuroterm_terminal.h`.
+The embedded core builds without X11 or weights. The host supplies PTY
+transport and its canvas and glyph backend.
+
+Use `neuroterm_init` for an owned live screen, then call `neuroterm_feed` and
+`neuroterm_read` to exchange bytes with the PTY. `neuroterm_paint_cell` shares
+the terminal's colors, wide cells, glyph styling, decorations, and cursor
+drawing with the X11 frontend. The host controls positioning and passes fill
+and glyph callbacks. The X11 app still uses its own scrollback, selection,
+and Neuronte font configuration.
+
+Run `make check-embed` for the headless checks.
+
 ## No font: the checks
 
 `make check` runs the terminal on a private Xvfb display with a fontconfig that knows no font and an
