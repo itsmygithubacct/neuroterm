@@ -9,7 +9,7 @@ is one program with few parts:
 
 - plain Xlib (no toolkit, no fontconfig, no FreeType, no OpenGL, no input method);
 - a pty and the libvterm parser (compiled in);
-- the Neuronte nets (compiled in) and the weight files (inside the program);
+- the Neuronte library (linked) and the weight files (inside the program);
 - no configuration file, no X resources.
 
 At run time it needs libc, libm and libX11.
@@ -25,11 +25,14 @@ make check NEURONTE_HOME=...                     # needs Xvfb, xdotool, xclip; s
 sh tests/callers.sh                              # the command lines of xterm's callers
 ```
 
-The build needs a C compiler, the libX11 headers, and the Neuronte SDK source
-with its [cell-mask API](https://github.com/itsmygithubacct/neuronte-sdk/tree/61df4489756cde5b486f1c7d66135f2bc4ea5131).
-In the Kilix source tree the SDK is picked up from
-`../../kilix-modules/neuronte-sdk`. Set `NEURONTE_SDK_HOME` for another checkout. It puts the newest `neuronte-split-vN.nrt` and every
-`neuronte-term-*.nrt` it is given inside the program; `build/neuroterm -list-weights` names them.
+The build needs a C compiler, the libX11 headers, and the Neuronte SDK.
+Metric Sans still compiles the SDK cell-mask source. Every other face goes
+through the SDK terminal opener in `libneuronte-sdk`, and the program links
+`libneuronte` from `NEURONTE_HOME` instead of compiling `neuronte.c`.
+`NEURONTE_SDK_HOME` defaults to `$(HOME)/gpu_terminal/kilix-modules/neuronte-sdk`.
+The build puts the newest `neuronte-split-vN.nrt`, every `neuronte-term-*.nrt`,
+and `neuronte-emoji-vN` it is given inside the program;
+`build/neuroterm -list-weights` names them.
 
 ## Run
 

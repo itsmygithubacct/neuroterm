@@ -1,22 +1,22 @@
 /* The terminal's only glyph source: Neuronte coverage masks.
  *
- * Files, in the order they are asked:
- *   the newest neuronte-split-vN.nrt, which holds the base characters and
- *   draws the mark for anything no file was trained on;
- *   then every neuronte-term-*.nrt in name order.
- * A character goes to the first file whose neuronte_untrained() is 0.
+ * The newest neuronte-split-vN.nrt is the base. Other split files, every
+ * neuronte-term-*.nrt, and neuronte-emoji-vN are added to one
+ * nsdk_terminal set from neuronte-sdk. That set decides which file was
+ * trained on a scalar, including a two-cell emoji's two halves. Metric
+ * Sans stays a face of this program and is asked first.
  *
  * Every file the build was given is inside the program, so nothing has to
  * be found at run time. A weights directory may add files of other names
- * (a newer split file, more term bundles). It never replaces a built-in
- * file, and a file there that does not open is skipped.
+ * (a newer split file, more term bundles, an emoji bundle). It never
+ * replaces a built-in file, and a file there that does not open is skipped.
  *
  *   NEUROTERM_WEIGHTS   a directory of .nrt files
  *   NEURONTE_HOME       a Neuronte tree; its weights/ is used
  *   otherwise           ~/.local/gpu_terminal/sources/neuronte/weights,
  *                       then /usr/share/neuronte/weights
  *
- * Coverage comes from neuronte_coverage_styled(), never from drawn pixels.
+ * Coverage comes from the SDK mask, never from drawn pixels.
  *
  * MIT licence. See LICENSE.
  */
@@ -24,6 +24,7 @@
 #include "glyphs.h"
 
 #include "neuronte_sdk_mask.h"
+#include "neuronte_sdk_terminal.h"
 
 #include <dirent.h>
 #include <stdlib.h>
@@ -51,6 +52,7 @@ static struct source *opened[MAX_FILES];
 static int opened_count;
 static unsigned long drawn;
 static int metric_sans;
+static nsdk_terminal *term_faces;
 
 static int has_suffix(const char *s, const char *suffix)
 {
@@ -81,6 +83,11 @@ static int is_metric(const char *name)
     return strncmp(name, "neuronte-metric-sans", 20) == 0 && has_suffix(name, "-v1.nrt");
 }
 
+static int is_emoji(const char *name)
+{
+    return strncmp(name, "neuronte-emoji-v", 16) == 0 && has_suffix(name, ".nrt");
+}
+
 static int known(const char *name)
 {
     for (int i = 0; i < file_count; i++)
@@ -93,7 +100,8 @@ static void add(const char *name, const char *where, const struct embedded *buil
 {
     if (file_count >= MAX_FILES || strlen(name) >= NAME_LEN || known(name))
         return;
-    if (split_version(name) < 0 && !is_term(name) && !(metric_sans && is_metric(name)))
+    if (split_version(name) < 0 && !is_term(name) && !is_emoji(name) &&
+        !(metric_sans && is_metric(name)))
         return;
     struct source *s = &files[file_count++];
     snprintf(s->name, sizeof s->name, "%s", name);
@@ -165,6 +173,60 @@ static int by_name(const void *a, const void *b)
     return strcmp(x->name, y->name);
 }
 
+static long emoji_version(const char *name)
+{
+    static const char prefix[] = "neuronte-emoji-v";
+    if (strncmp(name, prefix, sizeof prefix - 1) != 0)
+        return -1;
+    char *end;
+    long v = strtol(name + sizeof prefix - 1, &end, 10);
+    if (end == name + sizeof prefix - 1 || strcmp(end, ".nrt") != 0 || v < 0)
+        return -1;
+    return v;
+}
+
+static int opened_already(const struct source *s)
+{
+    for (int i = 0; i < opened_count; i++)
+        if (opened[i] == s)
+            return 1;
+    return 0;
+}
+
+/* Open every file of this version family that is not open yet, highest
+ * version first. A file that does not open is skipped. */
+static void open_ranked(long (*version)(const char *))
+{
+    for (;;) {
+        struct source *best = NULL;
+        long best_v = -1;
+        for (int i = 0; i < file_count; i++) {
+            long v = version(files[i].name);
+            if (v < 0 || opened_already(&files[i]) || !files[i].where[0])
+                continue;
+            if (!best || v > best_v) {
+                best = &files[i];
+                best_v = v;
+            }
+        }
+        if (!best)
+            return;
+        if (open_source(best) == 0)
+            opened[opened_count++] = best;
+        else
+            best->where[0] = 0;
+    }
+}
+
+static int add_to_terminal(struct source *s)
+{
+    if (s->builtin) {
+        size_t len = (size_t)(s->builtin->end - s->builtin->start);
+        return nsdk_terminal_add(term_faces, s->handle, s->name, s->builtin->start, len, 0);
+    }
+    return nsdk_terminal_add_path(term_faces, s->handle, s->where, 0);
+}
+
 int glyphs_init(int use_disk, int use_metric_sans, char *err, size_t err_len)
 {
     metric_sans = use_metric_sans;
@@ -194,6 +256,8 @@ int glyphs_init(int use_disk, int use_metric_sans, char *err, size_t err_len)
         }
         best->where[0] = 0;
     }
+    open_ranked(split_version);
+    open_ranked(emoji_version);
 
     struct source *terms[MAX_FILES];
     int n = 0;
@@ -218,6 +282,28 @@ int glyphs_init(int use_disk, int use_metric_sans, char *err, size_t err_len)
             return -1;
         }
     }
+    if (nsdk_terminal_create(&term_faces) != NEURONTE_OK) {
+        snprintf(err, err_len, "out of memory opening terminal faces");
+        return -1;
+    }
+    for (int i = 0; i < opened_count; i++) {
+        int rc;
+        if (is_metric(opened[i]->name))
+            continue;
+        rc = add_to_terminal(opened[i]);
+        if (rc < 0) {
+            nsdk_terminal_close(term_faces);
+            term_faces = NULL;
+            snprintf(err, err_len, "could not use weight file %s", opened[i]->name);
+            return -1;
+        }
+    }
+    if (nsdk_terminal_finish(term_faces) != NEURONTE_OK) {
+        nsdk_terminal_close(term_faces);
+        term_faces = NULL;
+        snprintf(err, err_len, "no terminal face opened");
+        return -1;
+    }
     return 0;
 }
 
@@ -227,23 +313,9 @@ void glyphs_list(FILE *out)
         fprintf(out, "%s\t%s\n", opened[i]->name, opened[i]->where);
 }
 
-static const neuronte *source_for(uint32_t scalar, int *trained)
-{
-    for (int i = 0; i < opened_count; i++)
-        if (!is_metric(opened[i]->name) && neuronte_untrained(opened[i]->handle, scalar) == 0) {
-            *trained = 1;
-            return opened[i]->handle;
-        }
-    *trained = 0;
-    return opened[0]->handle; /* draws the mark */
-}
-
 int glyphs_trained(uint32_t scalar)
 {
-    int trained = 0;
-    if (opened_count)
-        source_for(scalar, &trained);
-    return trained;
+    return term_faces != NULL && nsdk_terminal_trained(term_faces, scalar) == 1;
 }
 
 /* Select the native face for this em. Keep the terminal's fixed cell grid. */
@@ -283,14 +355,9 @@ const char *glyphs_file(uint32_t scalar, int cell_w)
     const struct source *metric = metric_source(scalar, cell_w, &style);
     if (metric)
         return metric->name;
-    int trained = 0;
-    const neuronte *n = source_for(scalar, &trained);
-    if (!trained)
+    if (term_faces == NULL)
         return NULL;
-    for (int i = 0; i < opened_count; i++)
-        if (opened[i]->handle == n)
-            return opened[i]->name;
-    return NULL;
+    return nsdk_terminal_name(term_faces, scalar);
 }
 
 unsigned long glyphs_drawn(void)
@@ -353,15 +420,17 @@ const uint8_t *glyphs_mask(uint32_t scalar, unsigned style, int wide, int cell_w
     if (!mask)
         return NULL;
 
-    int trained = 0;
     const struct source *metric = metric_source(scalar, cell_w, &style);
-    const neuronte *n = metric ? metric->handle : source_for(scalar, &trained);
-    if (metric)
-        trained = 1;
     unsigned nstyle = (style & GLYPH_BOLD ? NEURONTE_STYLE_BOLD : 0u) |
                       (style & GLYPH_ITALIC ? NEURONTE_STYLE_ITALIC : 0u);
-    if (nsdk_cell_mask(n, scalar, nstyle, trained, span, cell_w, cell_h,
-                       scratch, mask) != NEURONTE_OK) {
+    int rc;
+    if (metric)
+        rc = nsdk_cell_mask(metric->handle, scalar, nstyle, 1, span, cell_w, cell_h, scratch, mask);
+    else if (term_faces == NULL)
+        rc = -1;
+    else
+        rc = nsdk_terminal_mask(term_faces, scalar, nstyle, span, cell_w, cell_h, scratch, mask);
+    if (rc != NEURONTE_OK) {
         free(mask);
         return NULL;
     }

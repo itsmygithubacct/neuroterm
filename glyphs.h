@@ -28,8 +28,9 @@ const char *glyphs_file(uint32_t scalar, int cell_w);
 /* The coverage of one character, 0..255 per pixel, row-major, span * cell_w
  * wide and cell_h high, where span is 2 for a character two cells wide and 1
  * otherwise. A character no file was trained on gets Neuronte's own mark,
- * one mark across the whole span. The mask belongs to the cache; it is
- * valid until the next call. NULL when the cell cannot be drawn. */
+ * one mark across the whole span. A two-cell emoji whose bundle holds both
+ * halves is the left cell then the right cell. The mask belongs to the
+ * cache; it is valid until the next call. NULL when the cell cannot be drawn. */
 const uint8_t *glyphs_mask(uint32_t scalar, unsigned style, int wide, int cell_w, int cell_h);
 
 /* How many masks the nets have drawn since the start. */
