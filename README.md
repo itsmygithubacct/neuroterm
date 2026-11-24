@@ -100,6 +100,15 @@ the first file trained on it. A character no file was trained on is drawn as Neu
 hollow box with a small square), one mark per character, across both cells when the character is two
 cells wide. `build/neuroterm -which U+4E2D U+41` says which file draws a character.
 
+A combining mark is kept with the character before it, up to five marks a cell. When the cell is
+drawn, the character and its marks are composed as Unicode canonical composition does (e followed by
+U+0301 becomes é, Hangul jamo become a syllable), as long as a file has a drawing of the composed
+character; the marks left over are each drawn over it, in the whole cell. A mark after a space or a
+no-break space is drawn alone. The cell's text is not changed: copying gives the characters as they
+came. Characters with no glyph are not drawn: the default-ignorable ones (joiners, variation
+selectors, bidi controls, tags, U+034F and the like) and the interlinear annotation controls U+FFF9
+to U+FFFB. The tables are made by `tools/gen-unicode.py` from Unicode 15.1 into `unicode_tables.h`.
+
 A weights directory may add files the program does not hold (a newer split file, more term bundles):
 `$NEUROTERM_WEIGHTS`, else `$NEURONTE_HOME/weights`, else
 `~/.local/gpu_terminal/sources/neuronte/weights`, else `/usr/share/neuronte/weights`. A file there never
@@ -118,7 +127,10 @@ Use `neuroterm_init` for an owned live screen, then call `neuroterm_feed` and
 `neuroterm_read` to exchange bytes with the PTY. `neuroterm_paint_cell` shares
 the terminal's colors, wide cells, glyph styling, decorations, and cursor
 drawing with the X11 frontend. The host controls positioning and passes fill
-and glyph callbacks. The X11 app still uses its own scrollback, selection,
+and glyph callbacks, and optionally `can_draw`, which says whether its glyph
+backend has a drawing of a scalar; with it, a cell's marks are composed into
+the precomposed character where the backend can draw it. Without it, the base
+and each mark are drawn as received. The X11 app still uses its own scrollback, selection,
 and Neuronte font configuration.
 
 Run `make check-embed` for the headless checks.
@@ -139,7 +151,8 @@ empty home directory, and checks:
 - Input methods, dead keys and Compose (they need locale files). Keys that give a character directly
   work in any layout, the Cyrillic and Greek ones included.
 - Lines are not rewrapped when the window gets narrower or wider.
-- Combining marks are drawn over their base character, not placed. No right-to-left layout.
+- A combining mark with no composed form is drawn where its own drawing puts it, not placed on its
+  base character. No right-to-left layout.
 - A drawing two cells wide is the one-cell drawing centred; emoji from Neuronte's colour file are not used.
 - No blinking, no double-size lines, no OSC 52, no change of colours by escape sequence.
 - The mouse pointer is whatever the parent window has (asking for the usual text pointer would mean

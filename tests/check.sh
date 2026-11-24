@@ -169,6 +169,20 @@ got=$(xclip -o -selection primary 2>/dev/null)
 if [ "$got" = "COPY-ME-456 and more" ]; then pass "triple click copies the line"
 else dump; fail "triple click copied: '$(printf '%s' "$got" | cut -c1-40)' ($(head -1 "$D/dump" | grep -o 'selection=[01]'))"; fi
 
+# 7b. combining marks: the screen and the copy keep them as they came (E and U+0301, not U+00C9)
+sleep 0.6
+type_line "printf 'CAFE\\314\\201-MARK and more\\n'"
+sleep 0.3; dump
+want=$(printf 'CAFE\314\201-MARK')
+row=$(grep -n "^$want and more\$" "$D/dump" | head -1 | cut -d: -f1) # line 1 is the header
+if [ -n "$row" ]; then pass "a combining mark stays in the screen text"
+else fail "combining mark in the dump: $(grep -a 'MARK' "$D/dump" | od -c | head -2)"; row=2; fi
+xdotool mousemove --window "$WID" $((2 + 2 * cw)) $((2 + (row - 2) * chh + chh / 2)) click --repeat 2 --delay 60 1
+sleep 0.3
+got=$(xclip -o -selection primary 2>/dev/null)
+if [ "$got" = "$want" ]; then pass "double click copies a word with its combining mark"
+else fail "copied with a mark: $(printf '%s' "$got" | od -c | head -2)"; fi
+
 # 8. a full-screen program: alternate screen and back
 type_line "printf '\\033[?1049h\\033[2J\\033[HALT-SCREEN'; sleep 1; printf '\\033[?1049l'"
 sleep 0.4; dump

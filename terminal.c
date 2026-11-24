@@ -109,12 +109,99 @@ size_t neuroterm_row_text(const neuroterm *t, int row, char *buf, size_t cap)
     return n;
 }
 
+#include "unicode_tables.h"
+
+#define COUNT(a) (sizeof(a) / sizeof((a)[0]))
+
+/* Default-ignorable code points and the interlinear annotation controls
+ * have no glyph: joiners, selectors, bidi controls, tags and the like. */
+static bool ignorable(uint32_t scalar)
+{
+    size_t lo = 0, hi = COUNT(ignorable_ranges);
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        if (scalar < ignorable_ranges[mid].first) hi = mid;
+        else if (scalar > ignorable_ranges[mid].last) lo = mid + 1;
+        else return true;
+    }
+    return false;
+}
+
 static bool drawable(uint32_t scalar)
 {
-    return scalar > 0x20 && scalar != 0xa0 && scalar != UINT32_MAX &&
-           scalar != 0x200c && scalar != 0x200d && scalar != 0x2060 && scalar != 0xfeff &&
-           !(scalar >= 0xfe00 && scalar <= 0xfe0f) &&
-           !(scalar >= 0xe0100 && scalar <= 0xe01ef);
+    return scalar > 0x20 && scalar != 0xa0 && scalar != UINT32_MAX && !ignorable(scalar);
+}
+
+static bool blank(uint32_t scalar)
+{
+    return scalar == 0x20 || scalar == 0xa0;
+}
+
+static int combining_class(uint32_t scalar)
+{
+    size_t lo = 0, hi = COUNT(combining_classes);
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        if (scalar < combining_classes[mid].first) hi = mid;
+        else if (scalar > combining_classes[mid].last) lo = mid + 1;
+        else return combining_classes[mid].ccc;
+    }
+    return 0;
+}
+
+/* The primary composite of a and b, or 0. Hangul syllables arithmetically. */
+static uint32_t compose_pair(uint32_t a, uint32_t b)
+{
+    if (a >= 0x1100 && a < 0x1113 && b >= 0x1161 && b < 0x1176)
+        return 0xac00 + ((a - 0x1100) * 21 + (b - 0x1161)) * 28;
+    if (a >= 0xac00 && a <= 0xd7a3 && (a - 0xac00) % 28 == 0 && b > 0x11a7 && b < 0x11c3)
+        return a + (b - 0x11a7);
+    size_t lo = 0, hi = COUNT(compose_pairs);
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        if (a < compose_pairs[mid].first || (a == compose_pairs[mid].first && b < compose_pairs[mid].second))
+            hi = mid;
+        else if (a > compose_pairs[mid].first || b > compose_pairs[mid].second)
+            lo = mid + 1;
+        else
+            return compose_pairs[mid].composite;
+    }
+    return 0;
+}
+
+/* The scalars to draw for a cell: its own, or its base composed with the
+ * marks it can take (canonical composition: a mark is blocked by an
+ * earlier mark left over with a class of 0 or one at least its own) when
+ * the painter can draw the composite. Returns the count. */
+static int cell_scalars(const VTermScreenCell *cell, const neuroterm_painter *painter,
+                        uint32_t out[VTERM_MAX_CHARS_PER_CELL])
+{
+    int n = 0;
+    while (n < VTERM_MAX_CHARS_PER_CELL && cell->chars[n]) {
+        out[n] = cell->chars[n];
+        n++;
+    }
+    if (n < 2 || !painter->can_draw || combining_class(out[0]) != 0)
+        return n;
+    uint32_t composed[VTERM_MAX_CHARS_PER_CELL];
+    uint32_t starter = out[0];
+    int kept = 1, last = -1;
+    for (int i = 1; i < n; i++) {
+        int ccc = combining_class(out[i]);
+        uint32_t c = last == 0 || (last > 0 && last >= ccc) ? 0 : compose_pair(starter, out[i]);
+        if (c) {
+            starter = c;
+        } else {
+            composed[kept++] = out[i];
+            last = ccc;
+        }
+    }
+    if (starter == out[0] || !painter->can_draw(painter->user, starter))
+        return n;
+    composed[0] = starter;
+    for (int i = 0; i < kept; i++)
+        out[i] = composed[i];
+    return kept;
 }
 
 void neuroterm_paint_cell(VTermScreen *screen, const VTermScreenCell *cell,
@@ -139,12 +226,15 @@ void neuroterm_paint_cell(VTermScreen *screen, const VTermScreenCell *cell,
     if (style->paint_default_background || bg != style->background)
         painter->fill(painter->user, x, y, width, cell_h, bg);
 
-    if (fg != bg && drawable(cell->chars[0])) {
+    /* Marks over a space or no-break space are drawn alone. */
+    if (fg != bg && (drawable(cell->chars[0]) || blank(cell->chars[0]))) {
         unsigned flags = (cell->attrs.bold ? NEUROTERM_BOLD : 0u) |
                          (cell->attrs.italic ? NEUROTERM_ITALIC : 0u);
-        for (int i = 0; i < VTERM_MAX_CHARS_PER_CELL && cell->chars[i]; i++)
-            if (drawable(cell->chars[i]))
-                painter->glyph(painter->user, cell->chars[i], flags, x, y, width, cell_h, fg);
+        uint32_t scalars[VTERM_MAX_CHARS_PER_CELL];
+        int n = cell_scalars(cell, painter, scalars);
+        for (int i = 0; i < n; i++)
+            if (drawable(scalars[i]))
+                painter->glyph(painter->user, scalars[i], flags, x, y, width, cell_h, fg);
     }
     if (cell->attrs.underline) {
         int uy = (3 * cell_h) / 4 + line + 1;

@@ -437,10 +437,17 @@ static void paint_glyph(void *user, uint32_t ch, unsigned flags, int x, int y,
     if (mask) blend(mask, x, y, w, h, fg);
 }
 
+/* A composite is drawn only where a file has a drawing of it. */
+static bool paint_can_draw(void *user, uint32_t ch)
+{
+    (void)user;
+    return glyphs_file(ch, cell_w) != NULL;
+}
+
 static void draw_row(int row)
 {
     static const neuroterm_painter painter = {
-        .fill = paint_fill, .glyph = paint_glyph,
+        .fill = paint_fill, .glyph = paint_glyph, .can_draw = paint_can_draw,
     };
     int line = top_line() + row;
     int y = PAD + row * cell_h;

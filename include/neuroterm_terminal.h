@@ -35,11 +35,18 @@ size_t neuroterm_row_text(const neuroterm *t, int row, char *buf, size_t cap);
 
 enum { NEUROTERM_BOLD = 1u, NEUROTERM_ITALIC = 2u };
 
+/* can_draw, if set, says whether the glyph backend has a drawing of its own
+ * for a scalar. A cell's base and its combining marks are then composed, as
+ * Unicode canonical composition does, into the precomposed character when
+ * the backend can draw it; the marks left over are drawn over it. Without
+ * can_draw, or when the composite cannot be drawn, the base and each mark
+ * are drawn as received. The cell's text is never changed. */
 typedef struct neuroterm_painter {
     void *user;
     void (*fill)(void *user, int x, int y, int w, int h, uint32_t rgb);
     void (*glyph)(void *user, uint32_t scalar, unsigned style, int x, int y,
                   int w, int h, uint32_t rgb);
+    bool (*can_draw)(void *user, uint32_t scalar);
 } neuroterm_painter;
 
 typedef struct neuroterm_cell_style {
