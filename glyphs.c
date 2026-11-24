@@ -246,6 +246,11 @@ int glyphs_trained(uint32_t scalar)
     return trained;
 }
 
+/* Metric Sans pixel faces draw cells up to this width. Wider cells use the
+ * scaled face (to 32 px), whose greyscale edges read better from 14 px up,
+ * then the large face. */
+#define METRIC_PIXEL_MAX 13
+
 /* Select the native face for this em. Keep the terminal's fixed cell grid. */
 static const struct source *metric_source(uint32_t scalar, int cell_w, unsigned *style)
 {
@@ -255,7 +260,7 @@ static const struct source *metric_source(uint32_t scalar, int cell_w, unsigned 
     if (!metric_sans)
         return NULL;
     for (;;) {
-        if (cell_w <= 16)
+        if (cell_w <= METRIC_PIXEL_MAX)
             snprintf(face, sizeof face, "neuronte-metric-sans%d%s-v1.nrt", cell_w, suffix[variant]);
         else
             snprintf(face, sizeof face, "neuronte-metric-sans-%s-v1.nrt",
@@ -263,11 +268,11 @@ static const struct source *metric_source(uint32_t scalar, int cell_w, unsigned 
         for (int i = 0; i < opened_count; i++)
             if (strcmp(opened[i]->name, face) == 0 &&
                 neuronte_untrained(opened[i]->handle, scalar) == 0) {
-                if (cell_w <= 16)
+                if (cell_w <= METRIC_PIXEL_MAX)
                     *style &= ~variant;
                 return opened[i];
             }
-        if (variant == 0 || cell_w > 16)
+        if (variant == 0 || cell_w > METRIC_PIXEL_MAX)
             return NULL;
         variant = 0;
     }

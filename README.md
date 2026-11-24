@@ -85,6 +85,10 @@ build/neuroterm --font metric-sans
 The terminal keeps its fixed-width grid. It picks the Metric Sans face for
 the cell size and style where available, falling back to its regular face with
 synthetic styling or to the standard terminal bundles for other characters.
+Cells up to 13 px wide use the pixel faces. Cells from 14 to 32 px use the
+scaled face, which has greyscale edges. Wider cells use the large face. The
+scaled and large faces have no drawn bold or italic, so those styles are
+synthetic from 14 px up.
 Use `--font metric-sans -which U+0041` to see which file draws a character.
 
 ## How a cell is drawn
